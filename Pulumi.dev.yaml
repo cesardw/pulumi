@@ -1,0 +1,3 @@
+config:
+  devops-lab:db_password:
+    secure: AAABAPPagt7q/KT/JIJpLaOjfxT+fyEBVgGUKteexrOM9okk2YUR42t8Kmp52F/RY12aGddEJvkR
