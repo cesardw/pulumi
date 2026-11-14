@@ -1,4 +1,3 @@
-
 import os
 import pulumi
 import pulumi_docker as docker
