@@ -1,21 +1,30 @@
+
 import os
 import pulumi
 import pulumi_docker as docker
 
-# 1. Red de Docker compartida
+# ==========================================
+# 1. RED DE DOCKER COMPARTIDA
+# ==========================================
+
 red_devops = docker.Network("devops-network",
     name="devops-network",
     driver="bridge"
 )
 
-# 2. Imagen base local
+# ==========================================
+# 2. IMAGEN ALMACENADA EN AMAZON ECR
+# ==========================================
+
 mi_imagen = docker.RemoteImage("imagen-cumbre",
-    name="cumbre-web:latest",
+    name="615299762808.dkr.ecr.us-east-1.amazonaws.com/cumbre-web:latest",
     keep_locally=True
 )
 
-# 3. Definimos las instancias que queremos desplegar
-# Puedes agregar más elementos aquí si deseas escalar a 3, 4 o más contenedores.
+# ==========================================
+# 3. INSTANCIAS DEL BACKEND
+# ==========================================
+
 instancias_backend = [
     {"name": "cumbre-dev", "port": 8082, "alias": "backend-1"},
     {"name": "cumbre-qa", "port": 8083, "alias": "backend-2"},
@@ -24,24 +33,36 @@ instancias_backend = [
 backend_aliases = []
 contenedores = []
 
-# 4. Bucle para crear los contenedores dinámicamente
+# ==========================================
+# 4. CREACIÓN DINÁMICA DE CONTENEDORES
+# ==========================================
+
 for item in instancias_backend:
+
     contenedor = docker.Container(f"contenedor-{item['name']}",
         name=item['name'],
-        image=mi_imagen.name,
+
+        # Utilizamos la imagen descargada desde ECR
+        image=mi_imagen.image_id,
+
         networks_advanced=[{
             "name": red_devops.name,
             "aliases": [item['alias']]
         }],
+
         ports=[{
             "internal": 8080,
             "external": item['port'],
         }]
     )
+
     contenedores.append(contenedor)
     backend_aliases.append(f"server {item['alias']}:8080;")
 
-# 5. Generar automáticamente el archivo nginx.conf basado en las instancias activas
+# ==========================================
+# 5. GENERACIÓN AUTOMÁTICA DE NGINX.CONF
+# ==========================================
+
 contenido_nginx = f"""events {{ worker_connections 1024; }}
 
 http {{
@@ -62,20 +83,28 @@ http {{
 """
 
 ruta_conf_local = os.path.abspath("nginx.conf")
+
 with open(ruta_conf_local, "w") as f:
     f.write(contenido_nginx)
 
-# 6. Contenedor del Balanceador (Nginx)
+# ==========================================
+# 6. CONTENEDOR DEL BALANCEADOR NGINX
+# ==========================================
+
 balanceador = docker.Container("load-balancer",
     name="nginx-lb",
+
     image="nginx:latest",
+
     networks_advanced=[{
         "name": red_devops.name
     }],
+
     ports=[{
         "internal": 80,
         "external": 8080,
     }],
+
     volumes=[{
         "container_path": "/etc/nginx/nginx.conf",
         "host_path": ruta_conf_local,
@@ -83,5 +112,8 @@ balanceador = docker.Container("load-balancer",
     }]
 )
 
-# 7. Exportar URL principal
+# ==========================================
+# 7. EXPORTAR URL PRINCIPAL
+# ==========================================
+
 pulumi.export("url_balanceador", "http://localhost:8080")
