@@ -32,6 +32,9 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Crear red de Docker compartida
+        run: docker network create devops-network || true
+
       - name: Ejecutar despliegue con Pulumi
         uses: pulumi/actions@v5
         with:
