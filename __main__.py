@@ -116,3 +116,15 @@ balanceador = docker.Container("load-balancer",
 # ==========================================
 
 pulumi.export("url_balanceador", "http://localhost:8080")
+
+# ==========================================
+# 8. VALIDACIÓN DE CONEXIÓN AWS
+# ==========================================
+
+import pulumi_aws as aws
+
+identity = aws.get_caller_identity()
+
+pulumi.export("aws_account_id", identity.account_id)
+pulumi.export("aws_caller_arn", identity.arn)
+pulumi.export("aws_user_id", identity.user_id)
