@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Descargar repositorio
+      # 1. Descargar repositorio2
       - name: Checkout del repositorio
         uses: actions/checkout@v4
 
