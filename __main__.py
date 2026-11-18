@@ -121,9 +121,8 @@ run_backends = "\n".join(
 run_grafana = """
 docker run -d --name grafana --restart unless-stopped \\
   --network devops-network --network-alias grafana \\
+  -p 3000:3000 \\
   -v grafana-storage:/var/lib/grafana \\
-  -e "GF_SERVER_ROOT_URL=http://localhost/grafana/" \\
-  -e "GF_SERVER_SERVE_FROM_SUB_PATH=true" \\
   grafana/grafana-oss:latest
 """
 
@@ -193,7 +192,7 @@ eip = aws.ec2.Eip("cumbre-eip", instance=server.id, domain="vpc",
 # 5. EXPORTS
 # ==========================================
 pulumi.export("url_balanceador", eip.public_ip.apply(lambda ip: f"http://{ip}"))
-pulumi.export("url_grafana", eip.public_ip.apply(lambda ip: f"http://{ip}/grafana/"))
+pulumi.export("url_grafana", eip.public_ip.apply(lambda ip: f"http://{ip}:3000"))
 pulumi.export("instance_id", server.id)
 pulumi.export("ssm_connect", server.id.apply(lambda i: f"aws ssm start-session --target {i}"))
 pulumi.export("aws_account_id", identity.account_id)
