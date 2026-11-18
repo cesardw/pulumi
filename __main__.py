@@ -6,7 +6,6 @@ import pulumi_aws as aws
 # ==========================================
 # 0. CONFIGURACIÓN
 # ==========================================
-# Opcionales (pulumi config set instanceType t3.small, etc.)
 config = pulumi.Config()
 instance_type = config.get("instanceType") or "t3.micro"
 az = config.get("az") or "us-east-1a"
@@ -74,6 +73,7 @@ profile = aws.iam.InstanceProfile("ec2-profile", role=role.name)
 # ==========================================
 upstream = "\n".join(f"        server {b['alias']}:8080;" for b in instancias_backend)
 
+# Configuramos Nginx para rutear el tráfico de la app web y opcionalmente Grafana
 nginx_conf = f"""events {{ worker_connections 1024; }}
 
 http {{
@@ -89,6 +89,15 @@ http {{
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
         }}
+
+        # Opcional: Rutar Grafana a traves de la ruta /grafana/
+        location /grafana/ {{
+            proxy_pass http://grafana:3000/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }}
     }}
 }}
 """
@@ -101,6 +110,16 @@ run_backends = "\n".join(
     f"--network devops-network --network-alias {b['alias']} {imagen}"
     for b in instancias_backend
 )
+
+# Comando para levantar Grafana persistiendo sus datos en un volumen local
+run_grafana = """
+docker run -d --name grafana --restart unless-stopped \\
+  --network devops-network --network-alias grafana \\
+  -v grafana-storage:/var/lib/grafana \\
+  -e "GF_SERVER_ROOT_URL=http://localhost/grafana/" \\
+  -e "GF_SERVER_SERVE_FROM_SUB_PATH=true" \\
+  grafana/grafana-oss:latest
+"""
 
 user_data = f"""#!/bin/bash
 set -euxo pipefail
@@ -123,6 +142,7 @@ cat > /opt/nginx/nginx.conf <<'NGINX'
 NGINX
 
 {run_backends}
+{run_grafana}
 
 docker run -d --name nginx-lb --restart unless-stopped \\
   --network devops-network -p 80:80 \\
@@ -167,6 +187,7 @@ eip = aws.ec2.Eip("cumbre-eip", instance=server.id, domain="vpc",
 # 5. EXPORTS
 # ==========================================
 pulumi.export("url_balanceador", eip.public_ip.apply(lambda ip: f"http://{ip}"))
+pulumi.export("url_grafana", eip.public_ip.apply(lambda ip: f"http://{ip}/grafana/"))
 pulumi.export("instance_id", server.id)
 pulumi.export("ssm_connect", server.id.apply(lambda i: f"aws ssm start-session --target {i}"))
 pulumi.export("aws_account_id", identity.account_id)
