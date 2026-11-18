@@ -1,72 +1,84 @@
-import os
+import json
+
 import pulumi
-import pulumi_docker as docker
+import pulumi_aws as aws
 
 # ==========================================
-# 1. RED DE DOCKER COMPARTIDA
+# 0. CONFIGURACIÓN
 # ==========================================
+# Opcionales (pulumi config set instanceType t3.small, etc.)
+config = pulumi.Config()
+instance_type = config.get("instanceType") or "t3.micro"
+az = config.get("az") or "us-east-1a"
 
-red_devops = docker.Network("devops-network",
-    name="devops-network",
-    driver="bridge"
-)
+identity = aws.get_caller_identity()
+region = pulumi.Config("aws").require("region")
 
-# ==========================================
-# 2. IMAGEN ALMACENADA EN AMAZON ECR
-# ==========================================
-
-mi_imagen = docker.RemoteImage("imagen-cumbre",
-    name="615299762808.dkr.ecr.us-east-1.amazonaws.com/cumbre-web:latest",
-    keep_locally=True
-)
-
-# ==========================================
-# 3. INSTANCIAS DEL BACKEND
-# ==========================================
+registry = f"{identity.account_id}.dkr.ecr.{region}.amazonaws.com"
+imagen = f"{registry}/cumbre-web:latest"
 
 instancias_backend = [
-    {"name": "cumbre-dev", "port": 8082, "alias": "backend-1"},
-    {"name": "cumbre-qa", "port": 8083, "alias": "backend-2"},
+    {"name": "cumbre-dev", "alias": "backend-1"},
+    {"name": "cumbre-qa", "alias": "backend-2"},
 ]
 
-backend_aliases = []
-contenedores = []
+# ==========================================
+# 1. RED: VPC POR DEFECTO + SECURITY GROUP
+# ==========================================
+vpc = aws.ec2.get_vpc(default=True)
+
+subnets = aws.ec2.get_subnets(filters=[
+    aws.ec2.GetSubnetsFilterArgs(name="vpc-id", values=[vpc.id]),
+    aws.ec2.GetSubnetsFilterArgs(name="availability-zone", values=[az]),
+])
+
+sg = aws.ec2.SecurityGroup("web-sg",
+    description="HTTP publico hacia el balanceador Nginx",
+    vpc_id=vpc.id,
+    ingress=[aws.ec2.SecurityGroupIngressArgs(
+        protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"],
+        description="HTTP",
+    )],
+    egress=[aws.ec2.SecurityGroupEgressArgs(
+        protocol="-1", from_port=0, to_port=0, cidr_blocks=["0.0.0.0/0"],
+    )],
+    tags={"Name": "cumbre-web-sg"},
+)
 
 # ==========================================
-# 4. CREACIÓN DINÁMICA DE CONTENEDORES
+# 2. IAM: LEER DE ECR + ACCESO POR SSM (sin SSH)
 # ==========================================
-
-for item in instancias_backend:
-
-    contenedor = docker.Container(f"contenedor-{item['name']}",
-        name=item['name'],
-
-        # Utilizamos la imagen descargada desde ECR
-        image=mi_imagen.image_id,
-
-        networks_advanced=[{
-            "name": red_devops.name,
-            "aliases": [item['alias']]
+role = aws.iam.Role("ec2-role",
+    assume_role_policy=json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "ec2.amazonaws.com"},
+            "Action": "sts:AssumeRole",
         }],
+    }),
+)
 
-        ports=[{
-            "internal": 8080,
-            "external": item['port'],
-        }]
-    )
+attachments = [
+    aws.iam.RolePolicyAttachment(f"ec2-role-policy-{i}", role=role.name, policy_arn=arn)
+    for i, arn in enumerate([
+        "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+        "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    ])
+]
 
-    contenedores.append(contenedor)
-    backend_aliases.append(f"server {item['alias']}:8080;")
+profile = aws.iam.InstanceProfile("ec2-profile", role=role.name)
 
 # ==========================================
-# 5. GENERACIÓN AUTOMÁTICA DE NGINX.CONF
+# 3. USER DATA: INSTALA DOCKER Y LEVANTA TODO
 # ==========================================
+upstream = "\n".join(f"        server {b['alias']}:8080;" for b in instancias_backend)
 
-contenido_nginx = f"""events {{ worker_connections 1024; }}
+nginx_conf = f"""events {{ worker_connections 1024; }}
 
 http {{
     upstream mi_web_cluster {{
-        {chr(10).join('        ' + a for a in backend_aliases)}
+{upstream}
     }}
 
     server {{
@@ -81,50 +93,80 @@ http {{
 }}
 """
 
-ruta_conf_local = os.path.abspath("nginx.conf")
+# Rotación de logs de Docker (evita llenar el disco)
+daemon_json = '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}'
 
-with open(ruta_conf_local, "w") as f:
-    f.write(contenido_nginx)
-
-# ==========================================
-# 6. CONTENEDOR DEL BALANCEADOR NGINX
-# ==========================================
-
-balanceador = docker.Container("load-balancer",
-    name="nginx-lb",
-
-    image="nginx:latest",
-
-    networks_advanced=[{
-        "name": red_devops.name
-    }],
-
-    ports=[{
-        "internal": 80,
-        "external": 8080,
-    }],
-
-    volumes=[{
-        "container_path": "/etc/nginx/nginx.conf",
-        "host_path": ruta_conf_local,
-        "read_only": True,
-    }]
+run_backends = "\n".join(
+    f"docker run -d --name {b['name']} --restart unless-stopped "
+    f"--network devops-network --network-alias {b['alias']} {imagen}"
+    for b in instancias_backend
 )
 
+user_data = f"""#!/bin/bash
+set -euxo pipefail
+export HOME=/root
+
+dnf install -y docker
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{daemon_json}
+JSON
+systemctl enable --now docker
+
+aws ecr get-login-password --region {region} | docker login --username AWS --password-stdin {registry}
+
+docker network create devops-network
+
+mkdir -p /opt/nginx
+cat > /opt/nginx/nginx.conf <<'NGINX'
+{nginx_conf}
+NGINX
+
+{run_backends}
+
+docker run -d --name nginx-lb --restart unless-stopped \\
+  --network devops-network -p 80:80 \\
+  -v /opt/nginx/nginx.conf:/etc/nginx/nginx.conf:ro nginx:latest
+"""
+
 # ==========================================
-# 7. EXPORTAR URL PRINCIPAL
+# 4. INSTANCIA EC2 (Amazon Linux 2023)
 # ==========================================
+ami = aws.ec2.get_ami(
+    most_recent=True,
+    owners=["amazon"],
+    filters=[
+        aws.ec2.GetAmiFilterArgs(name="name", values=["al2023-ami-2023.*-x86_64"]),
+        aws.ec2.GetAmiFilterArgs(name="architecture", values=["x86_64"]),
+    ],
+)
 
-pulumi.export("url_balanceador", "http://localhost:8080")
+server = aws.ec2.Instance("cumbre-server",
+    ami=ami.id,
+    instance_type=instance_type,
+    subnet_id=subnets.ids[0],
+    vpc_security_group_ids=[sg.id],
+    iam_instance_profile=profile.name,
+    associate_public_ip_address=True,
+    user_data=user_data,
+    user_data_replace_on_change=True,
+    metadata_options=aws.ec2.InstanceMetadataOptionsArgs(
+        http_endpoint="enabled", http_tokens="required",
+    ),
+    root_block_device=aws.ec2.InstanceRootBlockDeviceArgs(
+        volume_size=20, volume_type="gp3", encrypted=True,
+    ),
+    tags={"Name": "cumbre-server"},
+    opts=pulumi.ResourceOptions(depends_on=attachments),
+)
+
+eip = aws.ec2.Eip("cumbre-eip", instance=server.id, domain="vpc",
+                  tags={"Name": "cumbre-eip"})
 
 # ==========================================
-# 8. VALIDACIÓN DE CONEXIÓN AWS
+# 5. EXPORTS
 # ==========================================
-
-import pulumi_aws as aws
-
-identity = aws.get_caller_identity()
-
+pulumi.export("url_balanceador", eip.public_ip.apply(lambda ip: f"http://{ip}"))
+pulumi.export("instance_id", server.id)
+pulumi.export("ssm_connect", server.id.apply(lambda i: f"aws ssm start-session --target {i}"))
 pulumi.export("aws_account_id", identity.account_id)
-pulumi.export("aws_caller_arn", identity.arn)
-pulumi.export("aws_user_id", identity.user_id)
