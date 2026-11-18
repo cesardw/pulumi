@@ -34,10 +34,16 @@ subnets = aws.ec2.get_subnets(filters=[
 sg = aws.ec2.SecurityGroup("web-sg",
     description="HTTP publico hacia el balanceador Nginx",
     vpc_id=vpc.id,
-    ingress=[aws.ec2.SecurityGroupIngressArgs(
-        protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"],
-        description="HTTP",
-    )],
+    ingress=[
+        aws.ec2.SecurityGroupIngressArgs(
+            protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"],
+            description="HTTP",
+        ),
+        aws.ec2.SecurityGroupIngressArgs(
+            protocol="tcp", from_port=3000, to_port=3000, cidr_blocks=["0.0.0.0/0"],
+            description="Grafana Directo",
+        ),
+    ],
     egress=[aws.ec2.SecurityGroupEgressArgs(
         protocol="-1", from_port=0, to_port=0, cidr_blocks=["0.0.0.0/0"],
     )],
