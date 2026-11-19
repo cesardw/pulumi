@@ -59,3 +59,22 @@ jobs:
           work-dir: .
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+  
+      # 8. Notificar resultado a Slack
+      - name: Notificar resultado a Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" == "success" ]; then
+            EMOJI=":white_check_mark:"
+            TEXT="Workflow *${{ github.workflow }}* completado con éxito en *${{ github.repository }}* (rama \`${{ github.ref_name }}\`)."
+          else
+            EMOJI=":x:"
+            TEXT="Workflow *${{ github.workflow }}* falló en *${{ github.repository }}* (rama \`${{ github.ref_name }}\`). Revisa los logs."
+          fi
+
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"${EMOJI} ${TEXT}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Ver ejecución en GitHub>\"}" \
+            "$SLACK_WEBHOOK_URL"
