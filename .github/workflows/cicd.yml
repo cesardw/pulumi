@@ -97,15 +97,28 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           JOB_STATUS: ${{ job.status }}
+          STACK_NAME: ${{ steps.set-stack.outputs.STACK_NAME }}
+          ACTOR: ${{ github.actor }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
           if [ "$JOB_STATUS" == "success" ]; then
             EMOJI=":white_check_mark:"
-            TEXT="Workflow *${{ github.workflow }}* completado con éxito en *${{ github.repository }}* (rama \`${{ github.ref_name }}\`)."
+            STATUS_TEXT="completado con éxito"
           else
             EMOJI=":x:"
-            TEXT="Workflow *${{ github.workflow }}* falló en *${{ github.repository }}* (rama \`${{ github.ref_name }}\`). Revisa los logs."
+            STATUS_TEXT="falló"
           fi
 
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "${EMOJI} Workflow *${{ github.workflow }}* ${STATUS_TEXT} en *${{ github.repository }}*\n• *Stack:* \`${STACK_NAME}\`\n• *Rama:* \`${{ github.ref_name }}\`\n• *Autor:* \`${ACTOR}\`\n• *Commit:* \`${SHORT_SHA}\`\n<${RUN_URL}|Ver ejecución en GitHub>"
+          }
+          EOF
+          )
+
           curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"${EMOJI} ${TEXT}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Ver ejecución en GitHub>\"}" \
+            --data "$PAYLOAD" \
             "$SLACK_WEBHOOK_URL"
