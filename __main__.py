@@ -43,6 +43,10 @@ sg = aws.ec2.SecurityGroup("web-sg",
             protocol="tcp", from_port=3000, to_port=3000, cidr_blocks=["0.0.0.0/0"],
             description="Grafana Directo",
         ),
+        aws.ec2.SecurityGroupIngressArgs(
+            protocol="tcp", from_port=9090, to_port=9090, cidr_blocks=["0.0.0.0/0"],
+            description="Prometheus UI",
+        ),
     ],
     egress=[aws.ec2.SecurityGroupEgressArgs(
         protocol="-1", from_port=0, to_port=0, cidr_blocks=["0.0.0.0/0"],
@@ -78,6 +82,7 @@ profile = aws.iam.InstanceProfile("ec2-profile", role=role.name)
 # 3. USER DATA: INSTALA DOCKER Y LEVANTA TODO
 # ==========================================
 upstream = "\n".join(f"        server {b['alias']}:8080;" for b in instancias_backend)
+prometheus_targets = ", ".join(f"'{b['alias']}:8080'" for b in instancias_backend)
 
 # Configuramos Nginx para rutear el tráfico de la app web y opcionalmente Grafana
 nginx_conf = f"""events {{ worker_connections 1024; }}
@@ -108,6 +113,20 @@ http {{
 }}
 """
 
+prometheus_yml = f"""global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'cumbre-backends'
+    metrics_path: /metrics
+    static_configs:
+      - targets: [{prometheus_targets}]
+"""
+
 # Rotación de logs de Docker (evita llenar el disco)
 daemon_json = '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}'
 
@@ -124,6 +143,16 @@ docker run -d --name grafana --restart unless-stopped \\
   -p 3000:3000 \\
   -v grafana-storage:/var/lib/grafana \\
   grafana/grafana-oss:latest
+"""
+
+# Comando para levantar Prometheus persistiendo sus datos en un volumen local
+run_prometheus = """
+docker run -d --name prometheus --restart unless-stopped \\
+  --network devops-network --network-alias prometheus \\
+  -p 9090:9090 \\
+  -v /opt/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro \\
+  -v prometheus-data:/prometheus \\
+  prom/prometheus:latest
 """
 
 user_data = f"""#!/bin/bash
@@ -146,8 +175,14 @@ cat > /opt/nginx/nginx.conf <<'NGINX'
 {nginx_conf}
 NGINX
 
+mkdir -p /opt/prometheus
+cat > /opt/prometheus/prometheus.yml <<'PROMETHEUS'
+{prometheus_yml}
+PROMETHEUS
+
 {run_backends}
 {run_grafana}
+{run_prometheus}
 
 docker run -d --name nginx-lb --restart unless-stopped \\
   --network devops-network -p 80:80 \\
@@ -193,6 +228,7 @@ eip = aws.ec2.Eip("cumbre-eip", instance=server.id, domain="vpc",
 # ==========================================
 pulumi.export("url_balanceador", eip.public_ip.apply(lambda ip: f"http://{ip}"))
 pulumi.export("url_grafana", eip.public_ip.apply(lambda ip: f"http://{ip}:3000"))
+pulumi.export("url_prometheus", eip.public_ip.apply(lambda ip: f"http://{ip}:9090"))
 pulumi.export("instance_id", server.id)
 pulumi.export("ssm_connect", server.id.apply(lambda i: f"aws ssm start-session --target {i}"))
 pulumi.export("aws_account_id", identity.account_id)
