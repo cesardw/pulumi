@@ -55,7 +55,7 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
-          security-checks: 'vuln,config'
+          scanners: 'vuln,config'
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
 
@@ -63,8 +63,8 @@ jobs:
       - name: Determinar Stack de Pulumi
         id: set-stack
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "STACK_NAME=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "$INPUT_ENV" ]; then
+            echo "STACK_NAME=$INPUT_ENV" >> $GITHUB_OUTPUT
           elif [ "${{ github.ref_name }}" == "main" ]; then
             echo "STACK_NAME=aws-prod" >> $GITHUB_OUTPUT
           else
