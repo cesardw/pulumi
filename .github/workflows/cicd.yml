@@ -50,17 +50,48 @@ jobs:
       - name: Login en Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 7. Ejecutar despliegue Pulumi
-      - name: Ejecutar despliegue con Pulumi
+      # 7. Escaneo de seguridad con Trivy
+      - name: Ejecutar escaneo de vulnerabilidades con Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          security-checks: 'vuln,config'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+
+      # 8. Definir el stack de Pulumi dinámicamente según la rama o selección manual
+      - name: Determinar Stack de Pulumi
+        id: set-stack
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "STACK_NAME=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref_name }}" == "main" ]; then
+            echo "STACK_NAME=aws-prod" >> $GITHUB_OUTPUT
+          else
+            echo "STACK_NAME=aws-dev" >> $GITHUB_OUTPUT
+          fi
+
+      # 9. Previsualización de cambios con Pulumi (Preview)
+      - name: Ejecutar Preview con Pulumi
         uses: pulumi/actions@v5
         with:
-          command: up
-          stack-name: aws-dev
+          command: preview
+          stack-name: ${{ steps.set-stack.outputs.STACK_NAME }}
           work-dir: .
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-  
-      # 8. Notificar resultado a Slack
+
+      # 10. Despliegue formal en AWS con Pulumi (Up)
+      - name: Ejecutar Despliegue con Pulumi
+        uses: pulumi/actions@v5
+        with:
+          command: up
+          stack-name: ${{ steps.set-stack.outputs.STACK_NAME }}
+          work-dir: .
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+
+      # 11. Notificar resultado a Slack
       - name: Notificar resultado a Slack
         if: always()
         env:
