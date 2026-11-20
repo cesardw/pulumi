@@ -1,2 +1,4 @@
 *.pyc
 venv/
+aws-dev-backup.json
+*-backup.json
