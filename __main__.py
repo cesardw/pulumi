@@ -1,5 +1,4 @@
 import json
-
 import pulumi
 import pulumi_aws as aws
 
@@ -9,12 +8,18 @@ import pulumi_aws as aws
 config = pulumi.Config()
 instance_type = config.get("instanceType") or "t3.micro"
 az = config.get("az") or "us-east-1a"
+image_tag = config.get("imageTag") or "v1.0.0"
+
+# Versiones fijadas para evitar cambios inesperados al recrear recursos
+grafana_tag = config.get("grafanaTag") or "11.3.0"
+prometheus_tag = config.get("prometheusTag") or "v2.55.1"
+nginx_tag = config.get("nginxTag") or "1.27.2-alpine"
 
 identity = aws.get_caller_identity()
 region = pulumi.Config("aws").require("region")
 
 registry = f"{identity.account_id}.dkr.ecr.{region}.amazonaws.com"
-imagen = f"{registry}/cumbre-web:latest"
+imagen = f"{registry}/cumbre-web:{image_tag}"
 
 instancias_backend = [
     {"name": "cumbre-dev", "alias": "backend-1"},
@@ -94,8 +99,9 @@ http {{
         }}
 
         # Opcional: Rutar Grafana a traves de la ruta /grafana/
-        location /grafana/ {{
-            proxy_pass http://grafana:3000/;
+                location /grafana/ {{
+            proxy_pass http://grafana:3000;
+            proxy_redirect http://localhost:3000/ http://$host/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

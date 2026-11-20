@@ -1,3 +1,4 @@
 config:
   aws:region: us-east-1
   devops-lab:instanceType: t3.micro
+  devops-lab:imageTag: v1.2.0-dev
