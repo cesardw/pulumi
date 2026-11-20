@@ -35,18 +35,10 @@ sg = aws.ec2.SecurityGroup("web-sg",
     description="HTTP publico hacia el balanceador Nginx",
     vpc_id=vpc.id,
     ingress=[
-        aws.ec2.SecurityGroupIngressArgs(
-            protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"],
-            description="HTTP",
-        ),
-        aws.ec2.SecurityGroupIngressArgs(
-            protocol="tcp", from_port=3000, to_port=3000, cidr_blocks=["0.0.0.0/0"],
-            description="Grafana Directo",
-        ),
-        aws.ec2.SecurityGroupIngressArgs(
-            protocol="tcp", from_port=9090, to_port=9090, cidr_blocks=["0.0.0.0/0"],
-            description="Prometheus UI",
-        ),
+    aws.ec2.SecurityGroupIngressArgs(
+        protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"],
+        description="HTTP",
+    ),
     ],
     egress=[aws.ec2.SecurityGroupEgressArgs(
         protocol="-1", from_port=0, to_port=0, cidr_blocks=["0.0.0.0/0"],
@@ -140,7 +132,8 @@ run_backends = "\n".join(
 run_grafana = """
 docker run -d --name grafana --restart unless-stopped \\
   --network devops-network --network-alias grafana \\
-  -p 3000:3000 \\
+  -e GF_SERVER_ROOT_URL='%(protocol)s://%(domain)s:%(http_port)s/grafana/' \\
+  -e GF_SERVER_SERVE_FROM_SUB_PATH=true \\
   -v grafana-storage:/var/lib/grafana \\
   grafana/grafana-oss:latest
 """
@@ -149,7 +142,7 @@ docker run -d --name grafana --restart unless-stopped \\
 run_prometheus = """
 docker run -d --name prometheus --restart unless-stopped \\
   --network devops-network --network-alias prometheus \\
-  -p 9090:9090 \\
+  -p 127.0.0.1:9090:9090 \\
   -v /opt/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro \\
   -v prometheus-data:/prometheus \\
   prom/prometheus:latest
@@ -227,8 +220,7 @@ eip = aws.ec2.Eip("cumbre-eip", instance=server.id, domain="vpc",
 # 5. EXPORTS
 # ==========================================
 pulumi.export("url_balanceador", eip.public_ip.apply(lambda ip: f"http://{ip}"))
-pulumi.export("url_grafana", eip.public_ip.apply(lambda ip: f"http://{ip}:3000"))
-pulumi.export("url_prometheus", eip.public_ip.apply(lambda ip: f"http://{ip}:9090"))
+pulumi.export("url_grafana", eip.public_ip.apply(lambda ip: f"http://{ip}/grafana/"))
 pulumi.export("instance_id", server.id)
 pulumi.export("ssm_connect", server.id.apply(lambda i: f"aws ssm start-session --target {i}"))
 pulumi.export("aws_account_id", identity.account_id)
