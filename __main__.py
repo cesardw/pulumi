@@ -52,7 +52,7 @@ sg = aws.ec2.SecurityGroup("web-sg",
 )
 
 # ==========================================
-# 2. IAM: LEER DE ECR + ACCESO POR SSM (sin SSH)
+# 2. IAM: LEER DE ECR + ACCESO POR SSM (sin SSH)/
 # ==========================================
 role = aws.iam.Role("ec2-role",
     assume_role_policy=json.dumps({
