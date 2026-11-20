@@ -2,7 +2,7 @@ config:
   aws:region: us-east-1
   aws:allowedAccountIds:
     - 615299762808
-  devops-lab:imageTag: v1.1.0-dev
+  devops-lab:imageTag: latest
   devops-lab:grafanaTag: 11.4.0
   devops-lab:prometheusTag: v3.0.0
   devops-lab:nginxTag: 1.27.3-alpine

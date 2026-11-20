@@ -40,10 +40,10 @@ sg = aws.ec2.SecurityGroup("web-sg",
     description="HTTP publico hacia el balanceador Nginx",
     vpc_id=vpc.id,
     ingress=[
-    aws.ec2.SecurityGroupIngressArgs(
-        protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"],
-        description="HTTP",
-    ),
+        aws.ec2.SecurityGroupIngressArgs(
+            protocol="tcp", from_port=80, to_port=80, cidr_blocks=["0.0.0.0/0"],
+            description="HTTP",
+        ),
     ],
     egress=[aws.ec2.SecurityGroupEgressArgs(
         protocol="-1", from_port=0, to_port=0, cidr_blocks=["0.0.0.0/0"],
@@ -99,7 +99,7 @@ http {{
         }}
 
         # Opcional: Rutar Grafana a traves de la ruta /grafana/
-                location /grafana/ {{
+        location /grafana/ {{
             proxy_pass http://grafana:3000;
             proxy_redirect http://localhost:3000/ http://$host/;
             proxy_set_header Host $host;
@@ -135,23 +135,23 @@ run_backends = "\n".join(
 )
 
 # Comando para levantar Grafana persistiendo sus datos en un volumen local
-run_grafana = """
+run_grafana = f"""
 docker run -d --name grafana --restart unless-stopped \\
   --network devops-network --network-alias grafana \\
   -e GF_SERVER_ROOT_URL='%(protocol)s://%(domain)s:%(http_port)s/grafana/' \\
   -e GF_SERVER_SERVE_FROM_SUB_PATH=true \\
   -v grafana-storage:/var/lib/grafana \\
-  grafana/grafana-oss:latest
+  grafana/grafana-oss:{grafana_tag}
 """
 
 # Comando para levantar Prometheus persistiendo sus datos en un volumen local
-run_prometheus = """
+run_prometheus = f"""
 docker run -d --name prometheus --restart unless-stopped \\
   --network devops-network --network-alias prometheus \\
   -p 127.0.0.1:9090:9090 \\
   -v /opt/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro \\
   -v prometheus-data:/prometheus \\
-  prom/prometheus:latest
+  prom/prometheus:{prometheus_tag}
 """
 
 user_data = f"""#!/bin/bash
@@ -185,7 +185,7 @@ PROMETHEUS
 
 docker run -d --name nginx-lb --restart unless-stopped \\
   --network devops-network -p 80:80 \\
-  -v /opt/nginx/nginx.conf:/etc/nginx/nginx.conf:ro nginx:latest
+  -v /opt/nginx/nginx.conf:/etc/nginx/nginx.conf:ro nginx:{nginx_tag}
 """
 
 # ==========================================
